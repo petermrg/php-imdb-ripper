@@ -1,4 +1,4 @@
-# php-imdb-ripper #
+# IMDb Ripper v.0.1 #
 
 Extracts movie information from IMDb website. It's very simple and easy to extend.
 Also provides links to fullsize images of the poster and cast.
