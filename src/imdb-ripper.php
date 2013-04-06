@@ -24,12 +24,43 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 class IMDbRipper {
 
-    public function __construct() {
+    private $cache = false;
+    private $cacheType = 'file';
+    private $cacheDir = '/tmp/';
+
+    public function __construct($options = []) {
+
+        if (isset($options['cache']) && ($options['cache'] == true)) $this->cache = true;
+
+        if ($this->cache && ($this->cacheType == 'file')) {
+            if (isset($options['cache_dir'])) $this->cacheDir = $options['cache_dir'];
+            if (substr($this->cacheDir, -1) != DIRECTORY_SEPARATOR) {
+                $this->cacheDir.= DIRECTORY_SEPARATOR;
+            }
+            if (!is_writable ($this->cacheDir)) {
+                $this->cache = false;
+                trigger_error("Cache disabled. ".
+                    "Directory '{$this->cacheDir}' doesn't exists or isn't writable");
+            }
+        }
+        else {
+            $this->cache == false;
+        }
+
     }
 
     private function loadHTML($url) {
-        // TODO: implement some cache mechanism
-        $html = file_get_contents($url);
+        if ($this->cache == true) {
+            $fn = $this->cacheDir.'imdbripper-'.md5($url);
+            if (file_exists($fn)) $html = file_get_contents($fn);
+            else {
+                $html = file_get_contents($url);
+                file_put_contents($fn, $html);
+            }
+        }
+        else  {
+            $html = file_get_contents($url);
+        }
         return $html;
     }
 
@@ -83,7 +114,7 @@ class IMDbRipper {
     }
 
     private function fullImage($url) {
-        return preg_replace('/_S.*_\./', '', $url);
+        return preg_replace('/_S.*_\./', '.', $url);
     }
 
     public function main($code) {

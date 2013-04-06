@@ -204,7 +204,7 @@ Array
 
 ```
 
-It's a work in progress, if you need a new feature, just send a request.
+It's a work in progress, if you need a new feature, just send an issue.
 
 ## To do ##
 
