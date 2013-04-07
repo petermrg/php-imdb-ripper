@@ -27,10 +27,12 @@ class IMDbRipper {
     private $cache = false;
     private $cacheType = 'file';
     private $cacheDir = '/tmp/';
+    private $imdbURL = 'http://www.imdb.com';
+    const   version = '1';
 
     public function __construct($options = []) {
 
-        if (isset($options['cache']) && ($options['cache'] == true)) $this->cache = true;
+        $this->cache = isset($options['cache']) && ($options['cache'] == true);
 
         if ($this->cache && ($this->cacheType == 'file')) {
             if (isset($options['cache_dir'])) $this->cacheDir = $options['cache_dir'];
@@ -55,13 +57,17 @@ class IMDbRipper {
             if (file_exists($fn)) $html = file_get_contents($fn);
             else {
                 $html = file_get_contents($url);
-                file_put_contents($fn, $html);
+                if ($html) file_put_contents($fn, $html);
             }
         }
         else  {
             $html = file_get_contents($url);
         }
-        return $html;
+        if (!$html) return false;
+        $doc = new DOMDocument();
+        @$doc->loadHTML($html);
+        $xpath = new DOMXpath($doc);
+        return $xpath;
     }
 
     private function getAttr($item, $name) {
@@ -81,14 +87,14 @@ class IMDbRipper {
         foreach ($items as $item) {
             $data[] = array(
                 'name' => trim($item->nodeValue),
-                'href' => $this->getAttr($item, 'href')
+                'code' => $this->getCode($this->getAttr($item, 'href'))
             );
         }
         return $data;
     }
 
     private function getValues($items) {
-        $data = array();
+        $data = [];
         foreach ($items as $item) {
             $data[] = trim($item->nodeValue);
         }
@@ -101,7 +107,7 @@ class IMDbRipper {
 
     private function getTable($xpath, $tr, $fields) {
         $items = $xpath->query($tr);
-        $rows = array();
+        $rows = [];
         foreach ($items as $i => $item) {
             $row = array();
             foreach ($fields as $name => $func) {
@@ -114,53 +120,37 @@ class IMDbRipper {
     }
 
     private function fullImage($url) {
-        return preg_replace('/_S.*_\./', '.', $url);
+        return preg_replace('/_S.*_\./', '', $url);
     }
 
     public function main($code) {
-        $url = 'http://www.imdb.com/title/tt'.$code.'/';
-        $html = $this->loadHTML($url);
-        $doc = new DOMDocument();
-        @$doc->loadHTML($html);
-        $xpath = new DOMXpath($doc);
+        $url = $this->imdbURL.'/title/tt'.$code.'/';
+        $xpath = $this->loadHTML($url);
+        if (!$xpath) return false;
         $data = array();
 
-        $data['title'] = $this->getValue($xpath->query('//*[@id="overview-top"]/h1/span[1]'));
-
+        $data['title'] = $this->getValue($xpath->query('//*[@id="overview-top"]/h1/span[@itemprop="name"]'));
         $data['image'] = $this->fullImage($this->getAttr(
-            $xpath->query('//*[@id="img_primary"]/div/a/img')->item(0), 'src')
-        );
-        $data['original_title'] = $this->getValue($xpath->query('//*[@id="overview-top"]/h1/span[3]/text()'));
-
-        $data['country'] = $this->getValues($xpath->query('//*[@id="titleDetails"]/div[2]/a'));
-
+            $xpath->query('//*[@id="img_primary"]/div/a/img')->item(0), 'src'));
+        $data['content_rating'] = $this->getValue($xpath->query('//*[@id="titleStoryLine"]/div/span[@itemprop="contentRating"]'));
+        $data['original_title'] = $this->getValue($xpath->query('//*[@id="overview-top"]/h1/span[@class="title-extra"]/text()'));
+        $data['country'] = $this->getValues($xpath->query('//*[@id="titleDetails"]//h4[starts-with(text(), "Country")]/../a'));
         $data['year'] = $this->getValue($xpath->query('//*[@id="overview-top"]/h1/span[2]/a'));
-
-        $data['duration'] = $this->getValue($xpath->query('//*[@id="overview-top"]/div[2]/time'));
-
-        $data['score'] = $this->getValue($xpath->query('//*[@id="overview-top"]/div[3]/div[1]'));
-
-        $data['content_rating'] = $this->getAttr(
-            $xpath->query('//*[@id="overview-top"]/div[2]/span[1]')->item(0), 'title'
-        );
-        $data['director'] = $this->getLinks($xpath->query('//*[@id="overview-top"]/div[4]/a'));
-
-        $data['writers'] = $this->getLinks($xpath->query('//*[@id="overview-top"]/div[5]/a'));
-
-        $data['stars'] = $this->getLinks($xpath->query('//*[@id="overview-top"]/div[6]/a'));
-
-        $data['genres'] = $this->getValues($xpath->query('//*[@id="titleStoryLine"]/div[4]/a'));
-
+        $data['description'] = $this->getValue($xpath->query('//*[@id="overview-top"]/p[@itemprop="description"]'));
+        $data['duration'] = $this->getValue($xpath->query('//*[@id="overview-top"]//*[@itemprop="duration"]'));
+        $data['score'] = $this->getValue($xpath->query('//*[@id="overview-top"]//*[@itemprop="ratingValue"]'));
+        $data['directors'] = $this->getLinks($xpath->query('//*[@id="overview-top"]//*[@itemprop="director"]/a'));
+        $data['writers'] = $this->getLinks($xpath->query('//*[@id="overview-top"]//h4[starts-with(text(), "Writer")]/../a'));
+        $data['stars'] = $this->getLinks($xpath->query('//*[@id="overview-top"]//*[@itemprop="actors"]/a'));
+        $data['genres'] = $this->getValues($xpath->query('//*[@id="titleStoryLine"]//h4[starts-with(text(), "Genre")]/../a'));
         $data['cast'] = $this->getTable($xpath, '//*[@id="titleCast"]/table/tr', array(
             'name' => function($xpath, $tr, $n) {
                 $item = $xpath->query($tr.'['.$n.']/td[2]/a');
                 return ($item->length == 0) ? false : $this->getValue($item);
             },
-            'href' => function($xpath, $tr, $n) {
+            'code' => function($xpath, $tr, $n) {
                 $item = $xpath->query($tr.'['.$n.']/td[2]/a');
-                return ($item->length == 0) ? false : $this->fullImage(
-                    $this->getAttr($item->item(0), 'href')
-                );
+                return $this->getCode($this->getAttr($item->item(0), 'href'));
             },
             'image' => function($xpath, $tr, $n) {
                 $item = $xpath->query($tr.'['.$n.']/td[1]/a/img');
@@ -174,11 +164,65 @@ class IMDbRipper {
     }
 
     public function keywords($code) {
-        // TODO:
+        $url = $this->imdbURL.'/title/tt'.$code.'/keywords';
+        $xpath = $this->loadHTML($url);
+        if (!$xpath) return false;
+        $data = [];
+        // $data['keywords'] = $this->getValues($xpath->query('//*[@id="tn15content"]/ul/li/b/a'));
+        return $data;
+    }
+
+    public function getCode($str) {
+        preg_match('/.*(name\/nm|title\/tt)(0*)(\d+).*/', $str, $code);
+        return isset($code[3]) ? $code[3]|0 : false;
     }
 
     public function fullCredits($code) {
-        // TODO:
+        $url = $this->imdbURL.'/title/tt'.$code.'/fullcredits';
+        $xpath = $this->loadHTML($url);
+        if (!$xpath) return false;
+        $data = [];
+
+        $data['cast'] = $this->getTable($xpath, '//div/table[@class="cast"]/tr', array(
+            'name' => function($xpath, $tr, $n) {
+                $item = $xpath->query($tr.'['.$n.']/td[2]/a');
+                return ($item->length == 0) ? false : $this->getValue($item);
+            },
+            'code' => function($xpath, $tr, $n) {
+                $item = $xpath->query($tr.'['.$n.']/td[2]/a');
+                return $this->getCode($this->getAttr($item->item(0), 'href'));
+            },
+            'character' => function($xpath, $tr, $n) {
+                $item = $xpath->query($tr.'['.$n.']/td[4]');
+                return $this->getValue($item);
+            },
+            'image' => function($xpath, $tr, $n) {
+                $item = $xpath->query($tr.'['.$n.']/td[1]/a/img');
+                return ($item->length == 0) ? false : $this->fullImage(
+                    $this->getAttr($item->item(0), 'src')
+                );
+            }
+        ));
+
+        $h5s = $xpath->query('//table/tr/td//h5/a');
+        foreach ($h5s as $h5) {
+            $name = $this->getAttr($h5, 'name');
+            $data[$name] = $this->getTable($xpath, '//h5/a[@name="'.$name.'"]/ancestor::table[1]//tr', array(
+                'name' => function($xpath, $tr, $n) {
+                    $item = $xpath->query("{$tr}[$n]/td[1]/a");
+                    return ($item->length == 0) ? false : $this->getValue($item);
+                },
+                'code' => function($xpath, $tr, $n) {
+                    $item = $xpath->query("{$tr}[$n]/td[1]/a");
+                    return $this->getCode($this->getAttr($item->item(0), 'href'));
+                },
+                'desc' => function($xpath, $tr, $n) {
+                    $item = $xpath->query("{$tr}[$n]/td[3]");
+                    return ($item->length == 0) ? false : $this->getValue($item);
+                }
+            ));
+        }
+        return $data;
     }
 
 }
